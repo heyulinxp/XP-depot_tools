@@ -109,7 +109,7 @@ class Gsutil(object):
     cmd.extend(args)
     ((out, err), code) = subprocess2.communicate(
         cmd,
-        stdout=subprocess2.PIPE,
+        stdout=subprocess2.STDOUT,
         stderr=subprocess2.PIPE,
         env=self.get_sub_env())
 
@@ -257,6 +257,63 @@ def _downloader_worker_thread(thread_num, q, force, base_url,
       if not extract or os.path.exists(extract_dir):
         if get_sha1(output_filename) == input_sha1_sum:
           continue
+    print("file = " + str(output_filename) + ", force = " + str(force) + ", extract = " + str(extract))
+    print("getsha1 = " + str(get_sha1(output_filename)) + ", inputsha1 = " + str(input_sha1_sum) + ", extradir = " + str(extract_dir));
+#    if os.path.exists(output_filename) and not force:
+#      if extract:
+#        if get_sha1(output_filename) == input_sha1_sum:
+#          print("in extract")
+#          if not tarfile.is_tarfile(output_filename):
+#            out_q.put('%d> Error: %s is not a tar.gz archive.' % (
+#                      thread_num, output_filename))
+#            ret_codes.put((1, '%s is not a tar.gz archive.' % (output_filename)))
+#            continue
+#          with tarfile.open(output_filename, 'r:gz') as tar:
+#            dirname = os.path.dirname(os.path.abspath(output_filename))
+#            # If there are long paths inside the tarball we can get extraction
+#            # errors on windows due to the 260 path length limit (this includes
+#            # pwd). Use the extended path syntax.
+#            if sys.platform == 'win32':
+#              dirname = '\\\\?\\%s' % dirname
+#            if not _validate_tar_file(tar, os.path.basename(extract_dir)):
+#              out_q.put('%d> Error: %s contains files outside %s.' % (
+#                        thread_num, output_filename, extract_dir))
+#              ret_codes.put((1, '%s contains invalid entries.' % (output_filename)))
+#              continue
+#            if os.path.exists(extract_dir):
+#              try:
+#                shutil.rmtree(extract_dir)
+#                out_q.put('%d> Removed %s...' % (thread_num, extract_dir))
+#              except OSError:
+#                out_q.put('%d> Warning: Can\'t delete: %s' % (
+#                          thread_num, extract_dir))
+#                ret_codes.put((1, 'Can\'t delete %s.' % (extract_dir)))
+#                continue
+#            out_q.put('%d> Extracting %d entries from %s to %s' %
+#                      (thread_num, len(tar.getmembers()),output_filename,
+#                       extract_dir))
+#            tar.extractall(path=dirname)
+#          # Set executable bit.
+#          if sys.platform == 'cygwin':
+#            # Under cygwin, mark all files as executable. The executable flag in
+#            # Google Storage will not be set when uploading from Windows, so if
+#            # this script is running under cygwin and we're downloading an
+#            # executable, it will be unrunnable from inside cygwin without this.
+#            st = os.stat(output_filename)
+#            os.chmod(output_filename, st.st_mode | stat.S_IEXEC)
+#          elif sys.platform != 'win32':
+#            # On non-Windows platforms, key off of the custom header
+#            # "x-goog-meta-executable".
+#            code, out, err = gsutil.check_call('stat', file_url)
+#            if code != 0:
+#              out_q.put('%d> %s' % (thread_num, err))
+#              ret_codes.put((code, err))
+#            elif re.search(r'executable:\s*1', out):
+#              st = os.stat(output_filename)
+#              os.chmod(output_filename, st.st_mode | stat.S_IEXEC)
+#          continue
+          
+
     # Check if file exists.
     file_url = '%s/%s' % (base_url, input_sha1_sum)
     (code, _, err) = gsutil.check_call('ls', file_url)
