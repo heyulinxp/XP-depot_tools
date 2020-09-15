@@ -1,0 +1,230 @@
+#!/usr/bin/env node
+
+var FS = require('fs');
+var http = require('http');
+var https = require('https');
+var Path = require("path");
+var os = require('os');
+var PLATFORM = os.platform();
+var CHARSET = "utf-8";
+var BASE_URL = "https://storage.googleapis.com/";
+/**
+ * 读取文本文件,返回打开文本的字符串内容，若失败，返回"".
+ * @param path 要打开的文件路径
+ */
+function read(path) {
+    try {
+        var text = FS.readFileSync(path, CHARSET);
+        text = text.replace(/^\uFEFF/, '');
+    }
+    catch (err0) {
+        return "";
+    }
+    return text;
+}
+/**
+ * 创建文件夹
+ */
+function createDirectory(path, mode, made) {
+    if (mode === undefined) {
+        mode = 511 & (~process.umask());
+    }
+    if (!made)
+        made = null;
+    if (typeof mode === 'string')
+        mode = parseInt(mode, 8);
+    path = Path.resolve(path);
+    try {
+        FS.mkdirSync(path, mode);
+        made = made || path;
+    }
+    catch (err0) {
+        switch (err0.code) {
+            case 'ENOENT':
+                made = createDirectory(Path.dirname(path), mode, made);
+                createDirectory(path, mode, made);
+                break;
+            default:
+                var stat;
+                try {
+                    stat = FS.statSync(path);
+                }
+                catch (err1) {
+                    throw err0;
+                }
+                if (!stat.isDirectory())
+                    throw err0;
+                break;
+        }
+    }
+    return made;
+}
+/**
+ * 使用指定扩展名搜索文件夹及其子文件夹下所有的文件
+ * @param dir 要搜索的文件夹
+ * @param extension 要搜索的文件扩展名,不包含点字符，例如："png"。不设置表示获取所有类型文件。
+ */
+function search(dir, extension) {
+    var list = [];
+    try {
+        var stat = FS.statSync(dir);
+    }
+    catch (e) {
+        return list;
+    }
+    if (stat.isDirectory()) {
+        findFiles(dir, list, extension, null);
+    }
+    return list;
+}
+function findFiles(filePath, list, extension, filterFunc, checkDir) {
+    var files = FS.readdirSync(filePath);
+    var length = files.length;
+    for (var i = 0; i < length; i++) {
+        if (files[i].charAt(0) == ".") {
+            continue;
+        }
+        var path = Path.join(filePath, files[i]);
+        var stat = FS.statSync(path);
+        if (stat.isDirectory()) {
+            if (checkDir) {
+                if (!filterFunc(path)) {
+                    continue;
+                }
+            }
+            findFiles(path, list, extension, filterFunc);
+        }
+        else if (filterFunc != null) {
+            if (filterFunc(path)) {
+                list.push(path);
+            }
+        }
+        else if (extension) {
+            var len = extension.length;
+            if (path.charAt(path.length - len - 1) == "." &&
+                path.substr(path.length - len, len).toLowerCase() == extension) {
+                list.push(path);
+            }
+        }
+        else {
+            list.push(path);
+        }
+    }
+}
+function parseAction(actions) {
+    if (actions.shift() != "download_from_google_storage") {
+        return null;
+    }
+    var result = { bucket: "", path: actions.pop() };
+    while (actions.length) {
+        var action = actions.shift();
+        if (action.indexOf("--platform") != -1) {
+            var platform = action.split("=")[1];
+            if (platform.charAt(platform.length - 1) == "*") {
+                platform.substring(0, platform.length - 1);
+            }
+            if (PLATFORM.indexOf(platform) == -1) {
+                return null;
+            }
+        }
+        else if (action == "--bucket") {
+            result.bucket = actions.shift();
+        }
+    }
+    return result;
+}
+function readItem(bucket, sha1Path) {
+    var item = { url: "", path: "" };
+    var sha1 = read(sha1Path).trim();
+    item.url = BASE_URL + bucket + "/" + sha1;
+    item.path = sha1Path.substring(0, sha1Path.length - 5);
+    return item;
+}
+function downloadFiles(list) {
+    function next() {
+        if (list.length == 0) {
+            return;
+        }
+        var item = list.shift();
+        console.log("downloading...", item.url, " to ", item.path);
+        download(item.url, item.path, function () {
+            next();
+        });
+    }
+    next();
+}
+function realdownload(url, path, callback) {
+    var httpClient = url.slice(0, 5) === 'https' ? https : http;
+    createDirectory(Path.dirname(path));
+    var writer = FS.createWriteStream(path);
+    writer.on('finish', function () {
+        FS.chmod(path, '777');
+        callback && callback();
+    });
+    httpClient.get(url, function (response) {
+        response.pipe(writer);
+    });
+}
+function download(url, path, callback) {
+	FS.exists(path, function(exists) {
+		console.log(exists ? path + "===exists" : "---not exists");
+		if(exists) {
+			callback && callback();
+			return;
+		}else{
+			realdownload(url, path, callback);
+		}
+	});
+}
+var args = process.argv.slice(2);
+var depsPath = args[0];
+if (args[1]) {
+    var currentPath = args[1];
+}
+else {
+    currentPath = process.cwd();
+}
+var depsText = read(depsPath);
+if (!depsText) {
+    depsText = read(Path.join(currentPath, depsPath));
+}
+if (!depsText) {
+    console.log("找不到DEPS文件！");
+    process.exit(1);
+}
+var lines = depsText.split("\n");
+depsText = "";
+while (lines.length) {
+    var line = lines.shift();
+    var index = line.indexOf("#");
+    if (index != -1) {
+        line = line.substring(0, index);
+    }
+    depsText += line + "\n";
+}
+var index = depsText.indexOf("hooks = [");
+depsText = "var " + depsText.substring(index);
+var hooks;
+eval(depsText);
+var list = [];
+while (hooks.length) {
+    var hook = hooks.shift();
+    var action = parseAction(hook.action);
+    if (!action) {
+        continue;
+    }
+    var actionPath = Path.join(currentPath, action.path);
+    if (actionPath.substring(actionPath.length - 5).toLowerCase() == ".sha1") {
+        var item = readItem(action.bucket, actionPath);
+        list.push(item);
+    }
+    else {
+        var files = search(actionPath, "sha1");
+        while (files.length) {
+            var file = files.shift();
+            item = readItem(action.bucket, file);
+            list.push(item);
+        }
+    }
+}
+downloadFiles(list);
